@@ -286,7 +286,6 @@ fn init<S: HasStateApi>(
 
 
 /// Claims an NFT
-/// It rejects if:
 #[receive(
     contract = "airdrop_project",
     name = "contract_claim_nft",
@@ -343,38 +342,13 @@ fn contract_claim_nft<S: HasStateApi>(
     Ok(res)
 }
 
-
-/* 
-/// Receive function. The input parameter is the boolean variable `throw_error`.
-///  If `throw_error == true`, the receive function will throw a custom error.
-///  If `throw_error == false`, the receive function executes successfully.
-#[receive(
-    contract = "airdrop_project",
-    name = "receive",
-    parameter = "bool",
-    error = "Error",
-    mutable
-)]
-fn receive<S: HasStateApi>(
-    ctx: &impl HasReceiveContext,
-    _host: &mut impl HasHost<State<S>, StateApiType = S>,
-) -> Result<(), Error> {
-    // Your code
-
-    let throw_error = ctx.parameter_cursor().get()?; // Returns Error::ParseError on failure
-    if throw_error {
-        Err(Error::YourError)
-    } else {
-        Ok(())
-    }
-}*/
-
 /// View function that returns the content of the state.
 #[receive(contract = "airdrop_project", name = "view", return_value = "State")]
 fn view<'b, S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
     host: &'b impl HasHost<State<S>, StateApiType = S>,
 ) -> ReceiveResult<&'b State<S>> {
+    // todo: determine whether we need to filter this return
     Ok(host.state())
 }
 
