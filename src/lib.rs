@@ -179,12 +179,10 @@ impl<S: HasStateApi> State<S> {
                     if index % 2 == 1 {
                         // it is on the right hand side
                         hunted = digest(nodes[startpoint + index - 1].clone() + &nodes[startpoint + index]) ;
-       //                 proof.push(nodes[startpoint + index - 1].clone());
                     }
                     else {
                         // it is on the left hand side
                         hunted = digest(nodes[startpoint + index].clone() + &nodes[startpoint + index + 1]);
-         //               proof.push(nodes[startpoint + index + 1].clone());
                     }
                     startpoint = end_point;
                     end_point = end_point + steps[step_number] as usize;
