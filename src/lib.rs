@@ -23,9 +23,9 @@ struct InitParams {
 
 /// The parameter type for the contract function `contract_claim_nft`.
 #[derive(Debug, Serialize, SchemaType)]
-struct ClaimNFTParams {
-    owner:  AccountAddress,
-    token:  ContractTokenId,
+pub struct ClaimNFTParams {
+    proof:  Vec<String>,
+    node:   String,
 }
 
 // 
@@ -53,7 +53,7 @@ impl MerkleTree {
 #[concordium(state_parameter = "S")]
 pub struct State<S> {
     // Keep track of how many tokens each address holds
-    all_owned_tokens:       StateMap<AccountAddress, u32, S>,
+    all_owned_tokens:       StateMap<String, u32, S>,
     /// All of the minted token IDs
     token_id:               ContractTokenId,
     /// Next token ID
@@ -90,13 +90,11 @@ impl<S: HasStateApi> State<S> {
     /// Mint a new token with a given address as the owner
     fn mint(
         &mut self,
-        claimer: &AccountAddress,
+        claimer: String,
     ) -> bool {
-                
-        // Insert or replace the vote for the account.
         self
             .all_owned_tokens
-            .entry(*claimer)
+            .entry(claimer)
             .and_modify(|prev_valule| *prev_valule = *prev_valule + 1)
             .or_insert(1);
     
@@ -197,7 +195,15 @@ impl<S: HasStateApi> State<S> {
         }
     }
 
+    // Use this to compare the user's proof with our's
+    pub fn check_proof(&self, test :ClaimNFTParams) -> bool {
+        let master_proof = self.get_hash_proof(test.node).unwrap();
+        let test_proof = test.proof;
+        return master_proof == test_proof;
+    }
+
     // Checks to see whether a given value is in the tree
+    // Generally used in testing
     pub fn check_hash_value(&self, test_address :String) -> bool {
         let tree = &self.merkle_tree;
         let steps = &tree.steps;
@@ -302,28 +308,23 @@ fn contract_claim_nft<S: HasStateApi>(
         return Err(Error::NFTLimitReached);
     }
 
-    let address_string =  params.owner.0.iter()
-        .map(|byte| format!("{:02X}", byte))
-        .collect::<Vec<String>>()
-        .concat();
+    let address_string =  params.node.clone();
         
-    let test_hash = digest(address_string);
     // if there is a whitelist and no reserve only whitelist can by
     // if there is no whitelist everyone can buy
     // if there is a reserve and a whitelist only whitelist can by reserve
 
     if (state.whitelist == true && state.nft_reserve == 0) ||
-        (state.whitelist == true && state.next_token_id > (state.nft_limit - state.nft_reserve)) {
-        if state.check_hash_value(test_hash) == false {
+        (state.whitelist == true && state.next_token_id >= (state.nft_limit - state.nft_reserve)) {
+        if params.proof.is_empty() || state.check_proof(params) == false {
             return Err(Error::AddressNotOnWhitelist);
         }
     }   
   
     let max_claims = state.nft_limit_per_address;
     if max_claims != 0 {
-        match state.all_owned_tokens.get(&params.owner) {
+        match state.all_owned_tokens.get(&address_string.clone()) {
             Some(val) => {
-                
                 if *val >= max_claims {
                     return Err(Error::NFTLimitReached);
                 }
@@ -331,7 +332,7 @@ fn contract_claim_nft<S: HasStateApi>(
             None => {},
         };
     }
-    let res = state.mint(&params.owner);
+    let res = state.mint(address_string.clone());
 
     if res == true {
         state.next_token_id = state.next_token_id + 1;
@@ -346,7 +347,8 @@ fn view<'b, S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
     host: &'b impl HasHost<State<S>, StateApiType = S>,
 ) -> ReceiveResult<&'b State<S>> {
-    // todo: determine whether we need to filter this return
+    // todo: determine whether we need to filter this return to provide specifics
+    // Currently all info is returned and the client app decides what to publish
     Ok(host.state())
 }
 
@@ -390,7 +392,11 @@ mod tests {
         
         const ACCOUNT_0: AccountAddress = AccountAddress([0u8; 32]);
         const TOKEN_1: ContractTokenId = TokenIdU32(1);
-    
+        let account_0_hash = digest(ACCOUNT_0.0.iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect::<Vec<String>>()
+            .concat());
+
         // This should allow anyone to purchase 1 NFT of TOKEN_0
         let params = InitParams {
             nft_limit: 1,
@@ -413,8 +419,8 @@ mod tests {
 
         let mut ctx_claim = TestReceiveContext::empty();
         let mint_params = ClaimNFTParams {
-            token: TOKEN_1,
-            owner: ACCOUNT_0,
+            node: account_0_hash.clone(),
+            proof: vec!(),
         };
 
         let mut host = TestHost::new(new_state, state_builder);
@@ -426,7 +432,7 @@ mod tests {
         assert_eq!(claim_result,true);
 
         let check = view(&ctx_claim, &host).unwrap();
-        match check.all_owned_tokens.get(&ACCOUNT_0) {
+        match check.all_owned_tokens.get(&account_0_hash) {
             Some(val) => {assert_eq!(*val, 1);},
             None => {assert!(false, "Address did not mint contract")},
         }
@@ -499,13 +505,86 @@ mod tests {
     }
 
     #[concordium_test]
-    fn test_claim_with_whitelist_full_reserve() {
+    fn test_merkle_proof() {
         let mut ctx = TestInitContext::empty();
         let mut state_builder = TestStateBuilder::new();
         
         const ACCOUNT_0: AccountAddress = AccountAddress([0u8; 32]);
         const ACCOUNT_1: AccountAddress = AccountAddress([1u8; 32]);
         const ACCOUNT_2: AccountAddress = AccountAddress([2u8; 32]);
+        const ACCOUNT_3: AccountAddress = AccountAddress([3u8; 32]);
+        const TOKEN_1: ContractTokenId = TokenIdU32(1);
+
+        let whitelist: Vec<AccountAddress> = vec![ACCOUNT_0, ACCOUNT_1, ACCOUNT_2];
+        
+        // This should allow anyone to purchase 1 NFT of TOKEN_0
+        let params = InitParams {
+            nft_limit: 1,
+            nft_time_limit: 0,
+            nft_limit_per_address: 0,
+            whitelist:  whitelist.clone(),
+            reserve:    0,
+            token_id: TOKEN_1,
+        };
+
+        let parameter_bytes = to_bytes(&params);
+        ctx.set_parameter(&parameter_bytes);
+
+        let state = init(&ctx, &mut state_builder).unwrap();
+
+        // convert the addresses to strings
+        let mut hashes: Vec<String> = vec!();
+        for address in whitelist {
+            hashes.push(digest(address.0.iter()
+                .map(|byte| format!("{:02X}", byte))
+                .collect::<Vec<String>>()
+                .concat()));
+        }
+
+        let bad_address = ACCOUNT_3.0.iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect::<Vec<String>>()
+            .concat();
+        
+        assert_eq!(state.check_hash_value(hashes[0].clone()), true);
+        assert_eq!(state.check_hash_value(hashes[1].clone()), true);
+        assert_eq!(state.check_hash_value(hashes[2].clone()), true);
+        assert_eq!(state.check_hash_value(bad_address), false);
+
+        let a = digest(hashes[0].clone() + &hashes[1]);
+        let b = digest(hashes[2].clone() + &hashes[2]); // MT will duplicated 4th element from 3rd
+        let c = digest(a.clone() + &b);
+
+        let test_merkle_proof = vec![hashes[0].clone(),a,c];       
+        
+        let test_address = digest(ACCOUNT_0.0.iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect::<Vec<String>>()
+            .concat());
+        let merkle_proof = state.get_hash_proof(test_address).unwrap();
+        assert_eq!(merkle_proof, test_merkle_proof);
+
+        let proof_params = ClaimNFTParams {
+            proof:test_merkle_proof.clone(),
+            node: hashes[0].clone(),
+        };
+        assert_eq!(state.check_proof(proof_params), true);
+
+        let proof_params = ClaimNFTParams {
+            proof:test_merkle_proof.clone(),
+            node: hashes[1].clone(),
+        };
+        assert_eq!(state.check_proof(proof_params), false);
+    }
+
+
+    #[concordium_test]
+    fn test_claim_with_whitelist_full_reserve() {
+        let mut ctx = TestInitContext::empty();
+        let mut state_builder = TestStateBuilder::new();
+        
+        const ACCOUNT_0: AccountAddress = AccountAddress([0u8; 32]);
+        const ACCOUNT_1: AccountAddress = AccountAddress([1u8; 32]);
         const TOKEN_1: ContractTokenId = TokenIdU32(1);
 
         let whitelist: Vec<AccountAddress> = vec![ACCOUNT_0, ACCOUNT_1];
@@ -525,10 +604,23 @@ mod tests {
 
         let state = init(&ctx, &mut state_builder).unwrap();
 
+        let mut test_proof: Vec<String> = vec!();
+        let acc1 = digest(ACCOUNT_0.0.iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect::<Vec<String>>()
+            .concat());
+        let acc2 =digest(ACCOUNT_1.0.iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect::<Vec<String>>()
+            .concat()); 
+                
+        test_proof.push(acc1.clone());
+        test_proof.push(digest(acc1.clone() + &acc2));        
+
         let mut ctx_claim = TestReceiveContext::empty();
         let mint_params = ClaimNFTParams {
-            token: TOKEN_1,
-            owner: ACCOUNT_0,
+            node: test_proof[0].clone(),
+            proof: test_proof.clone()
         };
         
         let mut host = TestHost::new(state, state_builder);
@@ -537,11 +629,11 @@ mod tests {
         ctx_claim.set_parameter(&claim_parameter_bytes);
         
         contract_claim_nft(&ctx_claim, &mut host).unwrap();
-
+        
         let mut ctx_bad_claim = TestReceiveContext::empty();
         let mint_bad_params = ClaimNFTParams {
-            token: TOKEN_1,
-            owner: ACCOUNT_2,
+            node: test_proof[1].clone(),
+            proof: test_proof.clone(),
         };
         let bad_claim_parameter_bytes = to_bytes(&mint_bad_params);
         ctx_bad_claim.set_parameter(&bad_claim_parameter_bytes);
@@ -557,7 +649,6 @@ mod tests {
         
         const ACCOUNT_0: AccountAddress = AccountAddress([0u8; 32]);
         const ACCOUNT_1: AccountAddress = AccountAddress([1u8; 32]);
-        const ACCOUNT_2: AccountAddress = AccountAddress([2u8; 32]);
         const TOKEN_1: ContractTokenId = TokenIdU32(1);
 
         let whitelist: Vec<AccountAddress> = vec![ACCOUNT_0, ACCOUNT_1];
@@ -572,6 +663,19 @@ mod tests {
             token_id: TOKEN_1,
         };
 
+        let mut test_proof: Vec<String> = vec!();
+        let acc1 = digest(ACCOUNT_0.0.iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect::<Vec<String>>()
+            .concat());
+        let acc2 =digest(ACCOUNT_1.0.iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect::<Vec<String>>()
+            .concat()); 
+                
+        test_proof.push(acc1.clone());
+        test_proof.push(digest(acc1.clone() + &acc2));        
+        
         let parameter_bytes = to_bytes(&params);
         ctx.set_parameter(&parameter_bytes);
 
@@ -579,8 +683,8 @@ mod tests {
 
         let mut ctx_claim = TestReceiveContext::empty();
         let mint_params = ClaimNFTParams {
-            token: TOKEN_1,
-            owner: ACCOUNT_0,
+            node: test_proof[0].clone(),
+            proof: test_proof.clone(),
         };
         
         let mut host = TestHost::new(state, state_builder);
@@ -592,8 +696,8 @@ mod tests {
 
         let mut ctx_bad_claim = TestReceiveContext::empty();
         let mint_bad_params = ClaimNFTParams {
-            token: TOKEN_1,
-            owner: ACCOUNT_2,
+            node: test_proof[1].clone(),
+            proof: test_proof.clone(),
         };
         let bad_claim_parameter_bytes = to_bytes(&mint_bad_params);
         ctx_bad_claim.set_parameter(&bad_claim_parameter_bytes);
@@ -630,9 +734,15 @@ mod tests {
         let state = init(&ctx, &mut state_builder).unwrap();
 
         let mut ctx_claim = TestReceiveContext::empty();
+
+        let address_hashed_not_wl = digest(ACCOUNT_1.0.iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect::<Vec<String>>()
+            .concat());
+        
         let mint_params = ClaimNFTParams {
-            token: TOKEN_1,
-            owner: ACCOUNT_1,
+            node: address_hashed_not_wl.clone(),
+            proof: vec!(),
         };
         
         let mut host = TestHost::new(state, state_builder);
@@ -640,18 +750,33 @@ mod tests {
         let claim_parameter_bytes = to_bytes(&mint_params);
         ctx_claim.set_parameter(&claim_parameter_bytes);
         
+        // this should not check the whitelist
         contract_claim_nft(&ctx_claim, &mut host).unwrap();
 
         let mut ctx_wl_claim = TestReceiveContext::empty();
+        let address_hashed = digest(ACCOUNT_0.0.iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect::<Vec<String>>()
+            .concat());
+        
+        let mut test_proof = vec!();
+        
+        test_proof.push(address_hashed.clone());
+        test_proof.push(digest(address_hashed.clone()+ &address_hashed));
+
         let mint_wl_params = ClaimNFTParams {
-            token: TOKEN_1,
-            owner: ACCOUNT_0,
+            node: address_hashed.clone(),
+            proof: test_proof.clone(),
         };
+       
         let wl_claim_parameter_bytes = to_bytes(&mint_wl_params);
         ctx_wl_claim.set_parameter(&wl_claim_parameter_bytes);
 
+        // this should check the whitelist and pass
         let good_claim = contract_claim_nft(&ctx_wl_claim, &mut host).unwrap();
         assert_eq!(good_claim, true);
+        
+        // this should not check the whitelist and fail
         let fail_claim = contract_claim_nft(&ctx_claim, &mut host);
       
         claim_eq!(fail_claim, Err(Error::AddressNotOnWhitelist), "Function should fail with NFT error");
@@ -684,9 +809,14 @@ mod tests {
         let new_state = state_result.unwrap();        
  
         let mut ctx_claim = TestReceiveContext::empty();
+        let address_hashed = digest(ACCOUNT_0.0.iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect::<Vec<String>>()
+            .concat());
+                    
         let mint_params = ClaimNFTParams {
-            token: TOKEN_1,
-            owner: ACCOUNT_0,
+            node: address_hashed,
+            proof: vec!(),
         };
 
         let mut host = TestHost::new(new_state, state_builder);
