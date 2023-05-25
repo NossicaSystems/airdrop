@@ -21,6 +21,11 @@ struct InitParams {
     token_id:        ContractTokenId,
 }
 
+#[derive(Serialize, SchemaType)]
+struct ViewState {
+    amount_of_claimed_tokens: u32,
+}
+
 /// The parameter type for the contract function `contract_claim_nft`.
 #[derive(Debug, Serialize, SchemaType)]
 pub struct ClaimNFTParams {
@@ -342,14 +347,18 @@ fn contract_claim_nft<S: HasStateApi>(
 }
 
 /// View function that returns the content of the state.
-#[receive(contract = "airdrop_project", name = "view", return_value = "State")]
+#[receive(contract = "airdrop_project", name = "view", return_value = "ViewState")]
 fn view<'b, S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
     host: &'b impl HasHost<State<S>, StateApiType = S>,
-) -> ReceiveResult<&'b State<S>> {
-    // todo: determine whether we need to filter this return to provide specifics
-    // Currently all info is returned and the client app decides what to publish
-    Ok(host.state())
+) -> ReceiveResult<ViewState> {
+    // todo: determine what info is required here
+    
+    let view_state = ViewState {
+        amount_of_claimed_tokens: host.state().next_token_id,
+    };  
+    
+    Ok(view_state)
 }
 
 #[concordium_cfg_test]
@@ -432,12 +441,8 @@ mod tests {
         assert_eq!(claim_result,true);
 
         let check = view(&ctx_claim, &host).unwrap();
-        match check.all_owned_tokens.get(&account_0_hash) {
-            Some(val) => {assert_eq!(*val, 1);},
-            None => {assert!(false, "Address did not mint contract")},
-        }
         
-        assert_eq!(check.next_token_id, 1);
+        assert_eq!(check.amount_of_claimed_tokens, 1);
     
         let claim_result_bad = contract_claim_nft(&ctx_claim, &mut host);
         claim_eq!(claim_result_bad, Err(Error::NFTLimitReached), "Function should fail with NFT error");

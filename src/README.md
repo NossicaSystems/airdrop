@@ -2,11 +2,15 @@
 
 Contract name: airdrop_project
 Module reference: 4d25cfad64199252b47ebcdd5dcf1ac7e05a8cdf386d78cb7b37873592e8b412
+
+The base64 conversion of the schema is:
+//8DAQAAAA8AAABhaXJkcm9wX3Byb2plY3QBABQABgAAAAkAAAB3aGl0ZWxpc3QQAgsJAAAAbmZ0X2xpbWl0BBUAAABuZnRfbGltaXRfcGVyX2FkZHJlc3MEDgAAAG5mdF90aW1lX2xpbWl0BAcAAAByZXNlcnZlBAgAAAB0b2tlbl9pZB0AAgAAABIAAABjb250cmFjdF9jbGFpbV9uZnQEFAACAAAABQAAAHByb29mEAIWAgQAAABub2RlFgIVAwAAABAAAABQYXJzZVBhcmFtc0Vycm9yAg8AAABORlRMaW1pdFJlYWNoZWQCFQAAAEFkZHJlc3NOb3RPbldoaXRlbGlzdAIEAAAAdmlldwEUAAEAAAAYAAAAYW1vdW50X29mX2NsYWltZWRfdG9rZW5zBAA
+
 Please see https://www.youtube.com/watch?v=J-SP_ptKu_I&t=1999s for an example on how to use these contracts.
 
 *External contract functions:*
 
-Init:  This initialises the nft.
+Init:  This initialises the nft.    
 
 This takes an InitParams structure which contains:
     whitelist - a vector of address.  Leave empty if there is no whitelist required.
