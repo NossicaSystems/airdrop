@@ -16,7 +16,7 @@ struct InitParams {
     whitelist:       Vec<AccountAddress>,
     nft_limit:       u32,
     nft_limit_per_address: u32,
-    nft_time_limit:  u32,
+    nft_time_limit:  Option<Timestamp>,
     reserve:         u32,
     token_id:        ContractTokenId,
 }
@@ -64,16 +64,16 @@ pub struct State<S> {
     /// Next token ID
     next_token_id:          u32,
     // Max number of nfts that can be minted before hitting reserve
-    nft_limit_per_address:  u32,
+    nft_limit_per_address:  u32,        // todo: change to option
     // Max number of nfts that can be minted before hitting reserve
-    nft_limit:              u32,
+    nft_limit:              u32,        // todo: change to option
     // Number of nfts which are held in reserve
-    nft_reserve:            u32,    
-    // Airdrop time limit in blocks
-    nft_time_limit:         u32,
+    nft_reserve:            u32,        // todo: change to option
+    // Airdrop time limit
+    nft_time_limit:         Option<Timestamp>,
     // Whitelist proof
-    whitelist:              bool,
-    merkle_tree:            MerkleTree,
+    whitelist:              bool,       // todo: change to option on the merkle tree
+    merkle_tree:            MerkleTree, 
 }
 
 impl<S: HasStateApi> State<S> {
@@ -87,7 +87,7 @@ impl<S: HasStateApi> State<S> {
             nft_limit_per_address: 0,
             merkle_tree:    MerkleTree::new(),
             whitelist:      false,
-            nft_time_limit: 0,
+            nft_time_limit: None,
             nft_reserve: 0,
         }
     }
@@ -257,6 +257,7 @@ enum Error {
     ParseParamsError,
     NFTLimitReached,
     AddressNotOnWhitelist,
+    AirdropNowClosed,
 }
 
 /// Init function that creates a new smart contract.
@@ -307,6 +308,14 @@ fn contract_claim_nft<S: HasStateApi>(
     host: &mut impl HasHost<State<S>, StateApiType = S>,
 ) -> Result<bool, Error> {
     let state = host.state_mut();
+
+    if state.nft_time_limit.is_some() {
+        let the_time  = ctx.metadata().slot_time();
+        if the_time > state.nft_time_limit.unwrap() {
+            return Err(Error::AirdropNowClosed);
+        }
+    }
+
     let params: ClaimNFTParams = ctx.parameter_cursor().get()?;
     
     if state.next_token_id == state.nft_limit {
@@ -353,7 +362,7 @@ fn view<'b, S: HasStateApi>(
     host: &'b impl HasHost<State<S>, StateApiType = S>,
 ) -> ReceiveResult<ViewState> {
     // todo: determine what info is required here
-    
+
     let view_state = ViewState {
         amount_of_claimed_tokens: host.state().next_token_id,
     };  
@@ -372,10 +381,10 @@ mod tests {
         let mut ctx = TestInitContext::empty();
 
         let mut state_builder = TestStateBuilder::new();
-        
+
         let params = InitParams {
             nft_limit: 0,
-            nft_time_limit: 0,
+            nft_time_limit: None,
             nft_limit_per_address: 0,
             whitelist:  vec!(),
             reserve:    0,
@@ -390,7 +399,7 @@ mod tests {
         assert_eq!(res.all_owned_tokens.is_empty(), true);
         assert_eq!(res.token_id, TokenIdU32(0));
         assert_eq!(res.nft_limit, 0);
-        assert_eq!(res.nft_time_limit, 0);
+        assert_eq!(res.nft_time_limit, None);
     }
 
     #[concordium_test]
@@ -409,7 +418,7 @@ mod tests {
         // This should allow anyone to purchase 1 NFT of TOKEN_0
         let params = InitParams {
             nft_limit: 1,
-            nft_time_limit: 0,
+            nft_time_limit: None,
             nft_limit_per_address: 0,
             whitelist:  vec!(),
             reserve:    0,
@@ -424,7 +433,7 @@ mod tests {
         assert_eq!(new_state.all_owned_tokens.is_empty(), true);
         assert_eq!(new_state.token_id, TOKEN_1);
         assert_eq!(new_state.nft_limit, 1);
-        assert_eq!(new_state.nft_time_limit, 0);
+        assert_eq!(new_state.nft_time_limit, None);
 
         let mut ctx_claim = TestReceiveContext::empty();
         let mint_params = ClaimNFTParams {
@@ -464,7 +473,7 @@ mod tests {
         // This should allow anyone to purchase 1 NFT of TOKEN_0
         let params = InitParams {
             nft_limit: 1,
-            nft_time_limit: 0,
+            nft_time_limit: None,
             nft_limit_per_address: 0,
             whitelist:  whitelist.clone(),
             reserve:    0,
@@ -525,7 +534,7 @@ mod tests {
         // This should allow anyone to purchase 1 NFT of TOKEN_0
         let params = InitParams {
             nft_limit: 1,
-            nft_time_limit: 0,
+            nft_time_limit: None,
             nft_limit_per_address: 0,
             whitelist:  whitelist.clone(),
             reserve:    0,
@@ -597,7 +606,7 @@ mod tests {
         // This should allow anyone to purchase 1 NFT of TOKEN_0
         let params = InitParams {
             nft_limit: 4,
-            nft_time_limit: 0,
+            nft_time_limit: None,
             nft_limit_per_address: 0,
             whitelist:  whitelist.clone(),
             reserve:    4,
@@ -661,7 +670,7 @@ mod tests {
         // This should allow anyone to purchase 1 NFT of TOKEN_0
         let params = InitParams {
             nft_limit: 4,
-            nft_time_limit: 0,
+            nft_time_limit: None,
             nft_limit_per_address: 0,
             whitelist:  whitelist.clone(),
             reserve:    0,
@@ -726,7 +735,7 @@ mod tests {
         // This should allow anyone to purchase 1 NFT of TOKEN_0
         let params = InitParams {
             nft_limit: 3,
-            nft_time_limit: 0,
+            nft_time_limit: None,
             nft_limit_per_address: 0,
             whitelist:  whitelist.clone(),
             reserve:    2,
@@ -800,7 +809,7 @@ mod tests {
         // This should allow anyone to purchase 1 NFT of TOKEN_0
         let params = InitParams {
             nft_limit: 10,
-            nft_time_limit: 0,
+            nft_time_limit: None,
             nft_limit_per_address: 1,
             whitelist:  vec!(),
             reserve:    0,
@@ -832,5 +841,52 @@ mod tests {
         let _ = contract_claim_nft(&ctx_claim, &mut host).unwrap();
         let claim_result_bad = contract_claim_nft(&ctx_claim, &mut host);
         claim_eq!(claim_result_bad, Err(Error::NFTLimitReached), "Function should fail with NFT error");
+    }
+
+    #[concordium_test]
+    fn test_mint_too_late() {
+        let mut ctx = TestInitContext::empty();
+        let mut state_builder = TestStateBuilder::new();
+        
+        const ACCOUNT_0: AccountAddress = AccountAddress([0u8; 32]);
+        const TOKEN_1: ContractTokenId = TokenIdU32(1);
+        let account_0_hash = digest(ACCOUNT_0.0.iter()
+            .map(|byte| format!("{:02X}", byte))
+            .collect::<Vec<String>>()
+            .concat());
+
+        // This should allow anyone to purchase 1 NFT of TOKEN_0
+        let params = InitParams {
+            nft_limit: 1,
+            nft_time_limit: Some(Timestamp::from_timestamp_millis(10)),
+            nft_limit_per_address: 0,
+            whitelist:  vec!(),
+            reserve:    0,
+            token_id: TOKEN_1,
+        };
+
+        let parameter_bytes = to_bytes(&params);
+        ctx.set_parameter(&parameter_bytes);
+
+        let state_result = init(&ctx, &mut state_builder);
+        let new_state = state_result.unwrap();        
+        assert_eq!(new_state.all_owned_tokens.is_empty(), true);
+        assert_eq!(new_state.token_id, TOKEN_1);
+        assert_eq!(new_state.nft_limit, 1);
+
+        let mut ctx_claim = TestReceiveContext::empty();
+        let mint_params = ClaimNFTParams {
+            node: account_0_hash.clone(),
+            proof: vec!(),
+        };
+
+        let mut host = TestHost::new(new_state, state_builder);
+
+        let claim_parameter_bytes = to_bytes(&mint_params);
+        ctx_claim.set_metadata_slot_time(Timestamp::from_timestamp_millis(11));
+        ctx_claim.set_parameter(&claim_parameter_bytes);
+        
+        let claim_result = contract_claim_nft(&ctx_claim, &mut host);
+        claim_eq!(claim_result, Err(Error::AirdropNowClosed), "Function should fail with Airdrop closed error");
     }
 }
