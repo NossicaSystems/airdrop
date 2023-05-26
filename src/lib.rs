@@ -22,15 +22,9 @@ struct InitParams {
     base_url:        String,
 }
 
-#[derive(Serialize, SchemaType)]
-struct ViewState {
-    amount_of_claimed_tokens: u32,
-}
-
-
 #[derive(Serialize, SchemaType, PartialEq, Debug)]
 struct ClaimReply {
-    url: String,
+    token_id: ContractTokenId,
 }
 
 /// The parameter type for the contract function `contract_claim_nft`.
@@ -375,23 +369,22 @@ fn claim_nft<S: HasStateApi>(
     state.next_token_id = state.next_token_id + 1;
     
     let return_value = ClaimReply {
-        url : url
+        token_id : ContractTokenId::from(current_token_id),
     };
     Ok(return_value)
 }
 
-
 /// View function that returns the content of the state.
-#[receive(contract = "airdrop_project", name = "view", return_value = "ViewState")]
+#[receive(
+    contract = "airdrop_project",
+    name = "view",
+    return_value = "u32"
+)]
 fn view<'b, S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
     host: &'b impl HasHost<State, StateApiType = S>,
-) -> ReceiveResult<ViewState> {
-    // todo: determine what info is required here
-    let view_state = ViewState {
-        amount_of_claimed_tokens: host.state().next_token_id,
-    };  
-    Ok(view_state)
+) -> ReceiveResult<u32> {
+    Ok(host.state().next_token_id)
 }
 
 #[concordium_cfg_test]
@@ -460,8 +453,7 @@ mod tests {
         let claim_result = claim_nft(&ctx_claim, &mut host, &mut logger);
         assert_eq!(claim_result.is_ok(),true);
 
-        let check = view(&ctx_claim, &host).unwrap();
-        assert_eq!(check.amount_of_claimed_tokens, 1);
+        assert_eq!(view(&ctx_claim, &host).unwrap(),1);
     
         let claim_result_bad: Result<ClaimReply, Error> = claim_nft(&ctx_claim, &mut host, &mut logger);
         assert_eq!(claim_result_bad, Err(Error::NFTLimitReached));
