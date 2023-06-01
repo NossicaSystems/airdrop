@@ -33,7 +33,7 @@ pub struct ClaimNFTParams {
 
 #[derive(Serialize, SchemaType, PartialEq, Debug)]
 struct ViewResult {
-    next_token: u32,
+    claimed_tokens: HashMap<ContractTokenId, AccountAddress>,
 }
 
 #[derive(Serialize, SchemaType, PartialEq, Debug)]
@@ -138,9 +138,7 @@ impl State {
     // Use this to get the node chain for a given value.
     // Returns None if the value is not found.
     pub fn get_hash_proof(&self, test: String) -> Option<Vec<String>> {
-        if self.merkle_tree.is_none() {
-            return None;
-        };
+        self.merkle_tree.as_ref()?;
         let local_tree = self.merkle_tree.as_ref().unwrap();
 
         let steps = &local_tree.steps;
@@ -150,38 +148,36 @@ impl State {
         let mut startpoint: usize = 0;
         let mut step_number = 0;
         let mut proof: Vec<String> = Vec::new();
-        loop {
-            let mut index = 0;
-            while startpoint + index < end_point {
-                if hunted == local_tree.hashroot {
-                    proof.push(hunted);
-                    return Some(proof);
-                }
-
-                if nodes[startpoint + index] == hunted {
-                    proof.push(hunted);
-                    if index % 2 == 1 {
-                        // it is on the right hand side
-                        hunted = digest(
-                            nodes[startpoint + index - 1].clone() + &nodes[startpoint + index],
-                        );
-                    } else {
-                        // it is on the left hand side
-                        hunted = digest(
-                            nodes[startpoint + index].clone() + &nodes[startpoint + index + 1],
-                        );
-                    }
-                    startpoint = end_point;
-                    end_point = end_point + steps[step_number] as usize;
-                    step_number = step_number + 1;
-                    index = 0;
-                    continue;
-                }
-
-                index = index + 1;
+        let mut index = 0;
+        while startpoint + index < end_point {
+            if hunted == local_tree.hashroot {
+                proof.push(hunted);
+                return Some(proof);
             }
-            return None;
+
+            if nodes[startpoint + index] == hunted {
+                proof.push(hunted);
+                if index % 2 == 1 {
+                    // it is on the right hand side
+                    hunted = digest(
+                        nodes[startpoint + index - 1].clone() + &nodes[startpoint + index],
+                    );
+                } else {
+                    // it is on the left hand side
+                    hunted = digest(
+                        nodes[startpoint + index].clone() + &nodes[startpoint + index + 1],
+                    );
+                }
+                startpoint = end_point;
+                end_point += steps[step_number] as usize;
+                step_number += 1;
+                index = 0;
+                continue;
+            }
+
+            index += 1;
         }
+        None
     }
 
     // Use this to compare the user's proof with our's
@@ -196,7 +192,7 @@ impl State {
         );
 
         let master_proof = self.get_hash_proof(claimer).unwrap();
-        return master_proof == test.proof;
+        master_proof == test.proof
     }
 
     // Checks to see whether a given value is in the tree
@@ -214,36 +210,34 @@ impl State {
         let mut startpoint = 0;
         let mut step_number = 0;
 
-        loop {
-            let mut index: usize = 0;
-            while startpoint + index < end_point {
-                if hunted.eq(&tree.hashroot) {
-                    return true;
-                }
-
-                if nodes[startpoint + index] == hunted {
-                    if index % 2 == 1 {
-                        // it is on the right hand side
-                        hunted = digest(
-                            nodes[startpoint + index - 1].clone() + &nodes[startpoint + index],
-                        );
-                    } else {
-                        // it is on the left hand side
-                        hunted = digest(
-                            nodes[startpoint + index].clone() + &nodes[startpoint + index + 1],
-                        );
-                    }
-                    startpoint = end_point;
-                    end_point = end_point + steps[step_number] as usize;
-                    step_number = step_number + 1;
-                    index = 0;
-                    continue;
-                }
-
-                index = index + 1;
+        let mut index: usize = 0;
+        while startpoint + index < end_point {
+            if hunted.eq(&tree.hashroot) {
+                return true;
             }
-            return false;
+
+            if nodes[startpoint + index] == hunted {
+                if index % 2 == 1 {
+                    // it is on the right hand side
+                    hunted = digest(
+                        nodes[startpoint + index - 1].clone() + &nodes[startpoint + index],
+                    );
+                } else {
+                    // it is on the left hand side
+                    hunted = digest(
+                        nodes[startpoint + index].clone() + &nodes[startpoint + index + 1],
+                    );
+                }
+                startpoint = end_point;
+                end_point += steps[step_number] as usize;
+                step_number +=  1;
+                index = 0;
+                continue;
+            }
+
+            index +=  1;
         }
+        false
     }
 }
 
@@ -252,7 +246,6 @@ impl State {
 enum Error {
     /// Failed parsing the parameter.
     #[from(ParseError)]
-    ParseParamsError,
     NFTLimitReached,
     AddressNotOnWhitelist,
     AirdropNowClosed,
@@ -286,7 +279,7 @@ fn init<S: HasStateApi>(
         state.taken_indexes = Some(HashMap::default());
     }
 
-    if params.whitelist.is_empty() == false {
+    if !params.whitelist.is_empty() {
         let mut whitelist: Vec<String> = vec![];
         for address in params.whitelist {
             whitelist.push(
@@ -321,11 +314,9 @@ fn claim_nft<S: HasStateApi>(
     let state = host.state_mut();
 
     if let Some(time_limit) = state.nft_time_limit {
-        if time_limit > Timestamp::from_timestamp_millis(0) {
-            if ctx.metadata().slot_time() > state.nft_time_limit.unwrap() {
-                return Err(Error::AirdropNowClosed);
-            }
-        }
+        if time_limit > Timestamp::from_timestamp_millis(0) && ctx.metadata().slot_time() > state.nft_time_limit.unwrap() {
+            return Err(Error::AirdropNowClosed);
+        }                
     }
 
     let params: ClaimNFTParams = ctx.parameter_cursor().get()?;
@@ -334,24 +325,20 @@ fn claim_nft<S: HasStateApi>(
         return Err(Error::NFTLimitReached);
     }
 
-    let claimer = params.node.clone();
+    let claimer = params.node;
 
     // if there is a whitelist and no reserve only whitelist can by
     // if there is no whitelist everyone can buy
     // if there is a reserve and a whitelist only whitelist can by reserve
-    if (state.merkle_tree.is_some() == true && state.nft_reserve.is_none())
-        || (state.merkle_tree.is_some()
-            && state.next_token_id >= (state.nft_limit - state.nft_reserve.unwrap_or(0)))
-    {
-        if params.proof.is_empty() || state.check_proof(&params) == false {
-            return Err(Error::AddressNotOnWhitelist);
-        }
+    if ((state.merkle_tree.is_some() && state.nft_reserve.is_none()) 
+        || (state.merkle_tree.is_some() && state.next_token_id >= (state.nft_limit - state.nft_reserve.unwrap_or(0)))) 
+        && (params.proof.is_empty() || !state.check_proof(&params)) {
+        return Err(Error::AddressNotOnWhitelist);
     }
 
     // This is where the code differentiates between the user claiming the next available token
     // and the user claiming a specific one they have requested.
-    let token_id_to_use: ContractTokenId;
-    if state.taken_indexes.is_some() {
+    let token_id_to_use = if state.taken_indexes.is_some() {
         if state
             .taken_indexes
             .as_ref()
@@ -360,10 +347,10 @@ fn claim_nft<S: HasStateApi>(
         {
             return Err(Error::IndexAlreadyClaimed);
         }
-        token_id_to_use = params.selected_token;
+        params.selected_token
     } else {
-        token_id_to_use = ContractTokenId::from(current_token_id);
-    }
+        ContractTokenId::from(current_token_id)
+    };
 
     // Event for minted token.
     let log_mint_result = logger.log(&Cis2Event::Mint(MintEvent {
@@ -384,14 +371,14 @@ fn claim_nft<S: HasStateApi>(
         },
     }
 
-    let url: String = state.base_url.clone() + &ContractTokenId::from(token_id_to_use).to_string();
+    let url: String = state.base_url.clone() + &token_id_to_use.to_string();
 
     // Metadata URL for the token.
     let log_meta_result = logger.log(&Cis2Event::TokenMetadata::<_, ContractTokenAmount>(
         TokenMetadataEvent {
-            token_id: ContractTokenId::from(token_id_to_use),
+            token_id: token_id_to_use,
             metadata_url: MetadataUrl {
-                url: url.clone(),
+                url,
                 hash: None,
             },
         },
@@ -416,7 +403,7 @@ fn claim_nft<S: HasStateApi>(
             .unwrap()
             .insert(token_id_to_use, claimer);
     } else {
-        state.next_token_id = state.next_token_id + 1;
+        state.next_token_id += 1;
     }
 
     Ok(())
@@ -428,14 +415,17 @@ fn claim_nft<S: HasStateApi>(
     name = "view",
     return_value = "ViewResult"
 )]
-fn view<'b, S: HasStateApi>(
+fn view<S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
-    host: &'b impl HasHost<State, StateApiType = S>,
+    host: &impl HasHost<State, StateApiType = S>,
 ) -> ReceiveResult<ViewResult> {
-    let vp = ViewResult {
-        next_token: host.state().next_token_id,
-    };
-    Ok(vp)
+    Ok(ViewResult {
+        claimed_tokens: host
+            .state()
+            .taken_indexes
+            .clone()
+            .unwrap_or(HashMap::default()),
+    })
 }
 
 /// View function that returns the total supply of available NFTs
@@ -444,10 +434,9 @@ fn view<'b, S: HasStateApi>(
     name = "total_supply",
     return_value = "u32"
 )]
-fn total_supply<'b, S: HasStateApi>(
+fn total_supply<S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
-    host: &'b impl HasHost<State, StateApiType = S>,
-) -> ReceiveResult<u32> {
+    host: &impl HasHost<State, StateApiType = S>,) -> ReceiveResult<u32> {
     Ok(host.state().nft_limit)
 }
 
@@ -457,16 +446,15 @@ fn total_supply<'b, S: HasStateApi>(
     name = "current_supply",
     return_value = "u32"
 )]
-fn current_supply<'b, S: HasStateApi>(
+fn current_supply<S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
-    host: &'b impl HasHost<State, StateApiType = S>,
+    host: &impl HasHost<State, StateApiType = S>,
 ) -> ReceiveResult<u32> {
-    let current_claimed;
-    if host.state().taken_indexes.is_some() {
-        current_claimed = host.state().taken_indexes.as_ref().unwrap().len() as u32;
+    let current_claimed = if host.state().taken_indexes.is_some() {
+        host.state().taken_indexes.as_ref().unwrap().len() as u32
     } else {
-        current_claimed = host.state().next_token_id;
-    }
+        host.state().next_token_id
+    };
 
     Ok(host.state().nft_limit - current_claimed)
 }
@@ -478,9 +466,9 @@ fn current_supply<'b, S: HasStateApi>(
     parameter = "ContractTokenID",
     return_value = "CheckOwnerReply"
 )]
-fn check_owner<'b, S: HasStateApi>(
+fn check_owner<S: HasStateApi>(
     ctx: &impl HasReceiveContext,
-    host: &'b impl HasHost<State, StateApiType = S>,
+    host: &impl HasHost<State, StateApiType = S>,
 ) -> ReceiveResult<CheckOwnerReply> {
     let params: ContractTokenId = ctx.parameter_cursor().get()?;
 
@@ -488,13 +476,12 @@ fn check_owner<'b, S: HasStateApi>(
         return Ok(CheckOwnerReply { address: None });
     }
 
-    if host
+    if !host
         .state()
         .taken_indexes
         .as_ref()
         .unwrap()
         .contains_key(&params)
-        == false
     {
         return Ok(CheckOwnerReply { address: None });
     }
@@ -580,11 +567,6 @@ mod tests {
 
         let claim_result = claim_nft(&ctx_claim, &mut host, &mut logger);
         assert_eq!(claim_result.is_ok(), true);
-
-        assert_eq!(
-            view(&ctx_claim, &host).unwrap(),
-            ViewResult { next_token: 1 }
-        );
 
         let claim_result_bad: Result<(), Error> = claim_nft(&ctx_claim, &mut host, &mut logger);
         assert_eq!(claim_result_bad, Err(Error::NFTLimitReached));
@@ -1046,7 +1028,7 @@ mod tests {
         let mut state_builder = TestStateBuilder::new();
 
         const ACCOUNT_0: AccountAddress = AccountAddress([0u8; 32]);
-        // This should allow anyone to purchase 1 NFT
+        // This should allow anyone to purchase 2 NFTs
         let params = InitParams {
             nft_limit: 2,
             nft_time_limit: 0,
@@ -1101,11 +1083,6 @@ mod tests {
             )),
             "Expected an event for token metadata for token 2"
         );
-        // We are using selected indexes so this should not get incremented
-        assert_eq!(
-            view(&ctx_claim, &host).unwrap(),
-            ViewResult { next_token: 0 }
-        );
 
         // check that the token has the correct owner:
         let mut owner_ctx = TestReceiveContext::empty();
@@ -1128,6 +1105,17 @@ mod tests {
         assert!(non_owner_result.is_ok());
         let non_result_details = non_owner_result.unwrap();
         assert!(non_result_details.address.is_none());
+
+        // Check the right amount of tokens exist and have been claimed
+        assert_eq!(total_supply(&non_owner_ctx, &mut host).unwrap(), 2);
+        assert_eq!(current_supply(&non_owner_ctx, &mut host).unwrap(), 1);
+
+        let mut vr = HashMap::default();
+        vr.insert(concordium_cis2::TokenIdU32(2), ACCOUNT_0);
+        assert_eq!(
+            view(&ctx_claim, &host).unwrap(),
+            ViewResult { claimed_tokens: vr }
+        );
 
         let claim_result_bad: Result<(), Error> = claim_nft(&ctx_claim, &mut host, &mut logger);
         assert_eq!(claim_result_bad, Err(Error::IndexAlreadyClaimed));
