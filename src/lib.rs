@@ -41,6 +41,12 @@ struct CheckOwnerReply {
     address: Option<AccountAddress>,
 }
 
+/// The parameter type for the contract function `contract_claim_nft`.
+#[derive(Debug, Serialize, SchemaType)]
+pub struct TokenParam {
+    token: ContractTokenId,
+}
+
 //
 #[derive(Serial, Deserial, SchemaType, Clone)]
 pub struct MerkleTree {
@@ -170,14 +176,12 @@ impl State {
                 proof.push(hunted);
                 if index % 2 == 1 {
                     // it is on the right hand side
-                    hunted = digest(
-                        nodes[startpoint + index - 1].clone() + &nodes[startpoint + index],
-                    );
+                    hunted =
+                        digest(nodes[startpoint + index - 1].clone() + &nodes[startpoint + index]);
                 } else {
                     // it is on the left hand side
-                    hunted = digest(
-                        nodes[startpoint + index].clone() + &nodes[startpoint + index + 1],
-                    );
+                    hunted =
+                        digest(nodes[startpoint + index].clone() + &nodes[startpoint + index + 1]);
                 }
                 startpoint = end_point;
                 end_point += steps[step_number] as usize;
@@ -230,23 +234,21 @@ impl State {
             if nodes[startpoint + index] == hunted {
                 if index % 2 == 1 {
                     // it is on the right hand side
-                    hunted = digest(
-                        nodes[startpoint + index - 1].clone() + &nodes[startpoint + index],
-                    );
+                    hunted =
+                        digest(nodes[startpoint + index - 1].clone() + &nodes[startpoint + index]);
                 } else {
                     // it is on the left hand side
-                    hunted = digest(
-                        nodes[startpoint + index].clone() + &nodes[startpoint + index + 1],
-                    );
+                    hunted =
+                        digest(nodes[startpoint + index].clone() + &nodes[startpoint + index + 1]);
                 }
                 startpoint = end_point;
                 end_point += steps[step_number] as usize;
-                step_number +=  1;
+                step_number += 1;
                 index = 0;
                 continue;
             }
 
-            index +=  1;
+            index += 1;
         }
         false
     }
@@ -325,9 +327,11 @@ fn claim_nft<S: HasStateApi>(
     let state = host.state_mut();
 
     if let Some(time_limit) = state.nft_time_limit {
-        if time_limit > Timestamp::from_timestamp_millis(0) && ctx.metadata().slot_time() > state.nft_time_limit.unwrap() {
+        if time_limit > Timestamp::from_timestamp_millis(0)
+            && ctx.metadata().slot_time() > state.nft_time_limit.unwrap()
+        {
             return Err(Error::AirdropNowClosed);
-        }                
+        }
     }
 
     let params: ClaimNFTParams = ctx.parameter_cursor().get()?;
@@ -336,17 +340,16 @@ fn claim_nft<S: HasStateApi>(
         return Err(Error::NFTLimitReached);
     }
 
-    let claimer = params.node;
-
     // if there is a whitelist and no reserve only whitelist can by
     // if there is no whitelist everyone can buy
     // if there is a reserve and a whitelist only whitelist can by reserve
-    if ((state.merkle_tree.is_some() && state.nft_reserve.is_none()) 
-        || (state.merkle_tree.is_some() && state.next_token_id >= (state.nft_limit - state.nft_reserve.unwrap_or(0)))) 
-        && (params.proof.is_empty() || !state.check_proof(&params)) {
+    if ((state.merkle_tree.is_some() && state.nft_reserve.is_none())
+        || (state.merkle_tree.is_some()
+            && state.next_token_id >= (state.nft_limit - state.nft_reserve.unwrap_or(0))))
+        && (params.proof.is_empty() || !state.check_proof(&params))
+    {
         return Err(Error::AddressNotOnWhitelist);
     }
-
     // This is where the code differentiates between the user claiming the next available token
     // and the user claiming a specific one they have requested.
     let token_id_to_use = if state.taken_indexes.is_some() {
@@ -363,6 +366,7 @@ fn claim_nft<S: HasStateApi>(
         ContractTokenId::from(current_token_id)
     };
 
+    let claimer = params.node;
     // Event for minted token.
     let log_mint_result = logger.log(&Cis2Event::Mint(MintEvent {
         token_id: token_id_to_use,
@@ -388,10 +392,7 @@ fn claim_nft<S: HasStateApi>(
     let log_meta_result = logger.log(&Cis2Event::TokenMetadata::<_, ContractTokenAmount>(
         TokenMetadataEvent {
             token_id: token_id_to_use,
-            metadata_url: MetadataUrl {
-                url,
-                hash: None,
-            },
+            metadata_url: MetadataUrl { url, hash: None },
         },
     ));
 
@@ -447,7 +448,8 @@ fn view<S: HasStateApi>(
 )]
 fn total_supply<S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
-    host: &impl HasHost<State, StateApiType = S>,) -> ReceiveResult<u32> {
+    host: &impl HasHost<State, StateApiType = S>,
+) -> ReceiveResult<u32> {
     Ok(host.state().nft_limit)
 }
 
@@ -474,14 +476,14 @@ fn current_supply<S: HasStateApi>(
 #[receive(
     contract = "airdrop_project",
     name = "check_owner",
-    parameter = "ContractTokenID",
+    parameter = "TokenParam",
     return_value = "CheckOwnerReply"
 )]
 fn check_owner<S: HasStateApi>(
     ctx: &impl HasReceiveContext,
     host: &impl HasHost<State, StateApiType = S>,
 ) -> ReceiveResult<CheckOwnerReply> {
-    let params: ContractTokenId = ctx.parameter_cursor().get()?;
+    let params: TokenParam = ctx.parameter_cursor().get()?;
 
     if host.state().taken_indexes.as_ref().is_none() {
         return Ok(CheckOwnerReply { address: None });
@@ -492,7 +494,7 @@ fn check_owner<S: HasStateApi>(
         .taken_indexes
         .as_ref()
         .unwrap()
-        .contains_key(&params)
+        .contains_key(&params.token)
     {
         return Ok(CheckOwnerReply { address: None });
     }
@@ -504,7 +506,7 @@ fn check_owner<S: HasStateApi>(
                 .taken_indexes
                 .as_ref()
                 .unwrap()
-                .get(&params)
+                .get(&params.token)
                 .unwrap(),
         ),
     });
