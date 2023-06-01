@@ -83,7 +83,18 @@ impl State {
         }
     }
 
-    // basic merkle tree implementation
+    // Basic merkle tree implementation
+    // This will produce merkle trees like the following (note the real values would be hashed)
+    // Example 1 - input 1,2,3
+    //  1    2    3   3
+    //    12        33
+    //        1233
+    //
+    // Example 2 - input 1,2,3,4,5,6
+    // 1   2   3   4   5    6
+    //  12       34      56    56
+    //      1234           5656
+    //           12345656
     pub fn create_hash_tree(&mut self, nodes: Vec<String>) {
         let mut working_vec: Vec<String> = vec![];
         for node in nodes {
