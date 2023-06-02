@@ -1,0 +1,13 @@
+prefix=/home/k0oda/Projects/airdrop/merkle_tree/target/wasm32-unknown-unknown/release/build/libz-sys-c9ab9a92afc3867b/out
+exec_prefix=@exec_prefix@
+libdir=@libdir@
+sharedlibdir=@sharedlibdir@
+includedir=@includedir@
+
+Name: zlib
+Description: zlib compression library
+Version: @VERSION@
+
+Requires:
+Libs: -L${libdir} -L${sharedlibdir} -lz
+Cflags: -I${includedir}
