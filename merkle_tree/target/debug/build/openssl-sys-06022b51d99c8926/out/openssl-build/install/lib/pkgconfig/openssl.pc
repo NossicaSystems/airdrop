@@ -1,9 +1,0 @@
-prefix=/home/k0oda/Projects/airdrop/merkle_tree/target/debug/build/openssl-sys-06022b51d99c8926/out/openssl-build/install
-exec_prefix=${prefix}
-libdir=${exec_prefix}/lib
-includedir=${prefix}/include
-
-Name: OpenSSL
-Description: Secure Sockets Layer and cryptography libraries and tools
-Version: 1.1.1u
-Requires: libssl libcrypto

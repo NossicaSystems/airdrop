@@ -1,3 +1,0 @@
-cargo:rerun-if-changed=build/main.rs
-cargo:rustc-env=TYPENUM_BUILD_CONSTS=/home/k0oda/Projects/airdrop/merkle_tree/target/wasm32-unknown-unknown/release/build/typenum-8acbfb8c3676cd6f/out/consts.rs
-cargo:rustc-env=TYPENUM_BUILD_OP=/home/k0oda/Projects/airdrop/merkle_tree/target/wasm32-unknown-unknown/release/build/typenum-8acbfb8c3676cd6f/out/op.rs

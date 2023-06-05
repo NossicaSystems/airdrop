@@ -1,5 +1,8 @@
+use concordium_cis2::*;
+use concordium_std::*;
 use wasm_bindgen::prelude::*;
 use sha256::digest;
+use js_sys::*;
 
 // Basic merkle tree implementation
 // This will produce merkle trees like the following (note the real values would be hashed)
@@ -14,11 +17,30 @@ use sha256::digest;
 //      1234           5656
 //           12345656
 
+type ContractTokenId = TokenIdU32;
+
+#[derive(Serial, Deserial, SchemaType, Clone)]
 #[wasm_bindgen]
-pub fn create_hash_tree(nodes: Vec<String>) ->Option<MerkleTree> {
+pub struct MerkleTree {
+    length: u8,
+    hash_tree: Vec<String>,
+    hashroot: String,
+    steps: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, SchemaType)]
+#[wasm_bindgen]
+pub struct ClaimNFTParams {
+    proof: Vec<String>,
+    node: AccountAddress,
+    selected_token: ContractTokenId,
+}
+
+#[wasm_bindgen]
+pub fn create_hash_tree(nodes: Vec<JsString>) ->Option<MerkleTree> {
     let mut working_vec: Vec<String> = vec![];
     for node in nodes {
-        working_vec.push(digest(node));
+        working_vec.push(digest(node.as_string().unwrap()));
     }
     let mut working_node_total: usize = working_vec.len();
     let mut steps: Vec<u8> = Vec::new();
@@ -67,25 +89,25 @@ pub fn create_hash_tree(nodes: Vec<String>) ->Option<MerkleTree> {
 #[wasm_bindgen]
 // Use this to get the node chain for a given value.
 // Returns None if the value is not found.
-pub fn get_hash_proof(test: String, merkle_tree: MerkleTree) -> Option<Vec<String>> {
+pub fn get_hash_proof(test: JsString, merkle_tree: MerkleTree) -> Option<Vec<JsString>> {
     let local_tree = merkle_tree;
 
     let steps = &local_tree.steps;
     let mut end_point: usize = local_tree.length as usize;
     let nodes: &Vec<String> = &local_tree.hash_tree;
-    let mut hunted: String = test;
+    let mut hunted: String = test.as_string().unwrap();
     let mut startpoint: usize = 0;
     let mut step_number = 0;
-    let mut proof: Vec<String> = Vec::new();
+    let mut proof: Vec<JsString> = Vec::new();
     let mut index = 0;
     while startpoint + index < end_point {
         if hunted == local_tree.hashroot {
-            proof.push(hunted);
+            proof.push(hunted.into());
             return Some(proof);
         }
 
         if nodes[startpoint + index] == hunted {
-            proof.push(hunted);
+            proof.push(hunted.into());
             if index % 2 == 1 {
                 // it is on the right hand side
                 hunted =
@@ -109,7 +131,7 @@ pub fn get_hash_proof(test: String, merkle_tree: MerkleTree) -> Option<Vec<Strin
 
 #[wasm_bindgen]
 // Use this to compare the user's proof with our's
-pub fn check_proof(test: &ClaimNFTParams) -> bool {
+pub fn check_proof(test: &ClaimNFTParams, merkle_tree: MerkleTree) -> bool {
     let claimer = digest(
         test.node
             .0
@@ -119,19 +141,14 @@ pub fn check_proof(test: &ClaimNFTParams) -> bool {
             .concat(),
     );
 
-    let master_proof: Vec<String> = get_hash_proof(claimer, ).unwrap();
+    let master_proof: Vec<JsString> = get_hash_proof(claimer.into(), merkle_tree).unwrap();
     master_proof == test.proof
 }
 
-#[wasm_bindgen]
 // Checks to see whether a given value is in the tree
 // Generally used in testing
-pub fn check_hash_value(&self, test_address: String) -> bool {
-    if self.merkle_tree.is_none() {
-        return false;
-    };
-    let tree = self.merkle_tree.as_ref().unwrap();
-
+#[wasm_bindgen]
+pub fn check_hash_value(tree: MerkleTree, test_address: String) -> bool {
     let steps = &tree.steps;
     let mut end_point = tree.length as usize;
     let nodes = &tree.hash_tree;
@@ -165,9 +182,4 @@ pub fn check_hash_value(&self, test_address: String) -> bool {
         index += 1;
     }
     false
-}
-
-
-fn main() {
-
 }
