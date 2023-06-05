@@ -1,4 +1,4 @@
-.idea/*
+.idea/
 merkle_tree/.idea/
-target/*
-merkle_tree/target/*
+target/
+merkle_tree/target/
