@@ -32,7 +32,7 @@ pub struct MerkleTree {
 #[wasm_bindgen]
 pub struct ClaimNFTParams {
     proof: Vec<String>,
-    node: AccountAddress,
+    node: String,
     selected_token: ContractTokenId,
 }
 
@@ -132,16 +132,7 @@ pub fn get_hash_proof(test: JsString, merkle_tree: MerkleTree) -> Option<Vec<JsS
 #[wasm_bindgen]
 // Use this to compare the user's proof with our's
 pub fn check_proof(test: &ClaimNFTParams, merkle_tree: MerkleTree) -> bool {
-    let claimer = digest(
-        test.node
-            .0
-            .iter()
-            .map(|byte| format!("{:02X}", byte))
-            .collect::<Vec<String>>()
-            .concat(),
-    );
-
-    let master_proof: Vec<JsString> = get_hash_proof(claimer.into(), merkle_tree).unwrap();
+    let master_proof: Vec<JsString> = get_hash_proof(test.node, merkle_tree).unwrap();
     master_proof == test.proof
 }
 
