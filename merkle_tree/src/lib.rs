@@ -132,18 +132,18 @@ pub fn get_hash_proof(test: JsString, merkle_tree: MerkleTree) -> Option<Vec<JsS
 #[wasm_bindgen]
 // Use this to compare the user's proof with our's
 pub fn check_proof(test: &ClaimNFTParams, merkle_tree: MerkleTree) -> bool {
-    let master_proof: Vec<JsString> = get_hash_proof(test.node, merkle_tree).unwrap();
+    let master_proof: Vec<JsString> = get_hash_proof(test.node.clone().into(), merkle_tree).unwrap();
     master_proof == test.proof
 }
 
 // Checks to see whether a given value is in the tree
 // Generally used in testing
 #[wasm_bindgen]
-pub fn check_hash_value(tree: MerkleTree, test_address: String) -> bool {
+pub fn check_hash_value(tree: MerkleTree, test_address: JsString) -> bool {
     let steps = &tree.steps;
     let mut end_point = tree.length as usize;
     let nodes = &tree.hash_tree;
-    let mut hunted = test_address;
+    let mut hunted = test_address.as_string().unwrap();
     let mut startpoint = 0;
     let mut step_number = 0;
 
@@ -157,11 +157,11 @@ pub fn check_hash_value(tree: MerkleTree, test_address: String) -> bool {
             if index % 2 == 1 {
                 // it is on the right hand side
                 hunted =
-                    digest(nodes[startpoint + index - 1].clone() + &nodes[startpoint + index]);
+                    digest(nodes[startpoint + index - 1].clone() + &nodes[startpoint + index]).into();
             } else {
                 // it is on the left hand side
                 hunted =
-                    digest(nodes[startpoint + index].clone() + &nodes[startpoint + index + 1]);
+                    digest(nodes[startpoint + index].clone() + &nodes[startpoint + index + 1]).into();
             }
             startpoint = end_point;
             end_point += steps[step_number] as usize;
