@@ -9,7 +9,7 @@ use core::fmt::Debug;
 /// To save bytes we use a token ID type limited to a `u32`.
 type ContractTokenId = TokenIdU32;
 
-type ContractTokenAmount = TokenAmountU8;
+type ContractTokenAmount = TokenAmountU32;
 
 fn account_address_to_string(address: AccountAddress) -> String {
     let hex_chars: Vec<String> = address
@@ -27,9 +27,12 @@ fn account_address_to_string(address: AccountAddress) -> String {
 struct InitParams {
     whitelist: Vec<String>,
     nft_limit: u32,
+    nft_limit_per_address: u32,
     nft_time_limit: u64,
     reserve: u32,
     base_url: String,
+    metadata: String,
+    whitelist_file: String,
     selected_index: bool,
 }
 
@@ -39,11 +42,14 @@ pub struct ClaimNFTParams {
     proof: Vec<String>,
     node: AccountAddress,
     selected_token: ContractTokenId,
+    amount_of_tokens: u32,
 }
 
 #[derive(Serialize, SchemaType, PartialEq, Debug)]
 struct ViewResult {
-    claimed_tokens: HashMap<ContractTokenId, String>,
+    metadata: String,
+    whitelist: String,
+    number_of_nfts: u32,
 }
 
 #[derive(Serialize, SchemaType, PartialEq, Debug)]
@@ -57,6 +63,12 @@ pub struct TokenParam {
     token: ContractTokenId,
 }
 
+/// The parameter type for the contract function `balance_of`.
+#[derive(Debug, Serialize, SchemaType)]
+pub struct BalanceParam {
+    node: AccountAddress,
+}
+
 //
 #[derive(Serial, Deserial, SchemaType, Clone)]
 pub struct MerkleTree {
@@ -67,27 +79,36 @@ pub struct MerkleTree {
 }
 
 /// Your smart contract state.
-#[derive(Serial, Deserial, Clone)]
-pub struct State {
+#[derive(Serial, DeserialWithState, StateClone)]
+#[concordium(state_parameter = "S")]
+pub struct State<S> {
     /// Next token ID.  Used if the user is just claiming tokens in sequential order.
     next_token_id: u32,
-    // Set of taken indexes.  Used if the user is claiming specific indexes.
+    /// Map of taken indexes.  Used if the user is claiming specific indexes.
     taken_indexes: Option<HashMap<ContractTokenId, String>>,
-    // Max number of nfts that can be minted before hitting reserve
+    /// Map containing how many claims each address has made.
+    claimed_nfts: StateMap<AccountAddress, u32, S>,
+    /// Max number of nfts that can be minted before hitting reserve
     nft_limit: u32,
-    // Number of nfts which are held in reserve
+    /// Max number of nfts that can be claimed per address
+    nft_limit_per_address:  Option<u32>, 
+    /// Number of nfts which are held in reserve
     nft_reserve: Option<u32>,
-    // Airdrop time limit
+    /// Airdrop time limit
     nft_time_limit: Option<Timestamp>,
-    // Whitelist proof
+    /// Whitelist proof
     merkle_tree: Option<MerkleTree>,
-    // Base url for these NFTs
+    /// Base url for these NFTs
     base_url: String, // something like "https://some.example/token/";
+    /// Metadata URL in IPFS
+    metadata: String,
+    /// Whitelist URL in IPFS
+    whitelist: String,
 }
 
-impl State {
+impl<S: HasStateApi> State<S> {
     /// Creates a new state with no tokens.
-    fn empty() -> Self {
+    fn empty(state_builder: &mut StateBuilder<S>) -> Self {
         State {
             next_token_id: 0,
             nft_limit: 1,
@@ -95,7 +116,11 @@ impl State {
             nft_time_limit: None,
             nft_reserve: None,
             base_url: String::new(),
+            metadata: String::new(),
+            whitelist: String::new(),
             taken_indexes: None,
+            nft_limit_per_address: None,
+            claimed_nfts: state_builder.new_map(),
         }
     }
 
@@ -279,15 +304,23 @@ enum Error {
 #[init(contract = "airdrop_project", parameter = "InitParams")]
 fn init<S: HasStateApi>(
     ctx: &impl HasInitContext,
-    _state_builder: &mut StateBuilder<S>,
-) -> InitResult<State> {
+    state_builder: &mut StateBuilder<S>,
+) -> InitResult<State<S>> {
     let params: InitParams = ctx.parameter_cursor().get()?;
-    let mut state: State = State::empty();
+    let mut state: State<S> = State::empty(state_builder);
+
     state.nft_limit = params.nft_limit;
     state.base_url = params.base_url;
 
+    state.metadata = params.metadata;
+    state.whitelist = params.whitelist_file;
+    
     if params.nft_time_limit != 0 {
         state.nft_time_limit = Some(Timestamp::from_timestamp_millis(params.nft_time_limit));
+    }
+
+    if params.nft_limit_per_address != 0 {        
+        state.nft_limit_per_address = Some(params.nft_limit_per_address);
     }
 
     if params.reserve != 0 {
@@ -316,7 +349,7 @@ fn init<S: HasStateApi>(
 )]
 fn claim_nft<S: HasStateApi>(
     ctx: &impl HasReceiveContext,
-    host: &mut impl HasHost<State, StateApiType = S>,
+    host: &mut impl HasHost<State<S>, StateApiType = S>,
     logger: &mut impl HasLogger,
 ) -> Result<(), Error> {
     let state = host.state_mut();
@@ -330,9 +363,25 @@ fn claim_nft<S: HasStateApi>(
     }
 
     let params: ClaimNFTParams = ctx.parameter_cursor().get()?;
+   
+    println!("minting address is {:?}", params.node);
+
+   
     let current_token_id = state.next_token_id;
-    if current_token_id == state.nft_limit {
+    let amount_of_tokens = params.amount_of_tokens;
+    if current_token_id + params.amount_of_tokens > state.nft_limit {
         return Err(Error::NFTLimitReached);
+    }
+
+    if let Some(max_claims_per_address) = state.nft_limit_per_address {
+        match state.claimed_nfts.get(&params.node) {
+            Some(val) => {
+                if *val + amount_of_tokens >= max_claims_per_address {
+                    return Err(Error::NFTLimitReached);
+                }
+            },
+            None => {},
+        };
     }
 
     // if there is a whitelist and no reserve only whitelist can by
@@ -364,7 +413,7 @@ fn claim_nft<S: HasStateApi>(
     // Event for minted token.
     let log_mint_result = logger.log(&Cis2Event::Mint(MintEvent {
         token_id: token_id_to_use,
-        amount: ContractTokenAmount::from(1),
+        amount: ContractTokenAmount::from(amount_of_tokens),
         owner: concordium_std::Address::Account(params.node),
     }));
 
@@ -409,13 +458,16 @@ fn claim_nft<S: HasStateApi>(
             .unwrap()
             .insert(token_id_to_use, account_address_to_string(params.node));
     } else {
-        state.next_token_id += 1;
+        state.next_token_id += params.amount_of_tokens;
     }
+
+    let mut tokens = state.claimed_nfts.entry(params.node).or_insert(0);
+    *tokens += amount_of_tokens;
 
     Ok(())
 }
 
-/// View function that returns the content of the state.
+/// View function that returns the metadata, whitelist and number of NFTs
 #[receive(
     contract = "airdrop_project",
     name = "view",
@@ -423,16 +475,42 @@ fn claim_nft<S: HasStateApi>(
 )]
 fn view<S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
-    host: &impl HasHost<State, StateApiType = S>,
+    host: &impl HasHost<State<S>, StateApiType = S>,
 ) -> ReceiveResult<ViewResult> {
+    let state = host.state();
+
     Ok(ViewResult {
-        claimed_tokens: host
-            .state()
-            .taken_indexes
-            .clone()
-            .unwrap_or(HashMap::default()),
+        metadata: state.metadata.clone(),
+        whitelist: state.whitelist.clone(),
+        number_of_nfts: state.nft_limit,
     })
 }
+
+/// View function that returns the metadata, whitelist and number of NFTs
+#[receive(
+    contract = "airdrop_project",
+    name = "balance_of",
+    parameter = "BalanceParam",
+    return_value = "u32"
+)]
+fn balance_of<S: HasStateApi>(
+    ctx: &impl HasReceiveContext,
+    host: &impl HasHost<State<S>, StateApiType = S>,
+) -> ReceiveResult<u32> {
+    let state: &State<S> = host.state();
+    let params: BalanceParam = ctx.parameter_cursor().get()?;
+    println!("balance address is {:?}", params.node);
+
+    let res = state.claimed_nfts.get(&params.node);
+    //.ok_or(0).unwrap();
+    if res.is_none() {
+        Ok(0)
+    }
+    else {
+        Ok(*state.claimed_nfts.get(&params.node).unwrap())
+    }
+}
+
 
 /// View function that returns the total supply of available NFTs
 #[receive(
@@ -442,7 +520,7 @@ fn view<S: HasStateApi>(
 )]
 fn total_supply<S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
-    host: &impl HasHost<State, StateApiType = S>,
+    host: &impl HasHost<State<S>, StateApiType = S>,
 ) -> ReceiveResult<u32> {
     Ok(host.state().nft_limit)
 }
@@ -455,7 +533,7 @@ fn total_supply<S: HasStateApi>(
 )]
 fn current_supply<S: HasStateApi>(
     _ctx: &impl HasReceiveContext,
-    host: &impl HasHost<State, StateApiType = S>,
+    host: &impl HasHost<State<S>, StateApiType = S>,
 ) -> ReceiveResult<u32> {
     let current_claimed = if host.state().taken_indexes.is_some() {
         host.state().taken_indexes.as_ref().unwrap().len() as u32
@@ -475,7 +553,7 @@ fn current_supply<S: HasStateApi>(
 )]
 fn check_owner<S: HasStateApi>(
     ctx: &impl HasReceiveContext,
-    host: &impl HasHost<State, StateApiType = S>,
+    host: &impl HasHost<State<S>, StateApiType = S>,
 ) -> ReceiveResult<CheckOwnerReply> {
     let params: TokenParam = ctx.parameter_cursor().get()?;
 
@@ -524,7 +602,10 @@ mod tests {
             whitelist: vec![],
             reserve: 0,
             base_url: String::new(),
+            whitelist_file: String::new(),
+            metadata: String::new(),
             selected_index: false,
+            nft_limit_per_address: 0
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -544,12 +625,15 @@ mod tests {
 
         // This should allow anyone to purchase 1 NFT
         let params = InitParams {
-            nft_limit: 1,
+            nft_limit: 3,
             nft_time_limit: 0,
             whitelist: vec![],
             reserve: 0,
             base_url: String::new(),
+            whitelist_file: String::new(),
+            metadata: String::new(),
             selected_index: false,
+            nft_limit_per_address: 0
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -557,7 +641,7 @@ mod tests {
 
         let state_result = init(&ctx, &mut state_builder);
         let new_state = state_result.unwrap();
-        assert_eq!(new_state.nft_limit, 1);
+        assert_eq!(new_state.nft_limit, 3);
 
         let mut ctx_claim = TestReceiveContext::empty();
         ctx_claim.set_metadata_slot_time(Timestamp::from_timestamp_millis(1));
@@ -565,6 +649,7 @@ mod tests {
             node: ACCOUNT_0,
             proof: vec![],
             selected_token: concordium_cis2::TokenIdU32(0),
+            amount_of_tokens: 2,
         };
 
         let mut host = TestHost::new(new_state, state_builder);
@@ -600,7 +685,10 @@ mod tests {
             whitelist: whitelist.clone(),
             reserve: 0,
             base_url: String::new(),
+            whitelist_file: String::new(),
+            metadata: String::new(),
             selected_index: false,
+            nft_limit_per_address: 0
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -652,9 +740,12 @@ mod tests {
             nft_limit: 1,
             nft_time_limit: 0,
             whitelist: whitelist.clone(),
+            whitelist_file: String::new(),
+            metadata: String::new(),
             reserve: 0,
             base_url: String::new(),
             selected_index: false,
+            nft_limit_per_address: 0
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -690,6 +781,7 @@ mod tests {
             proof: test_merkle_proof.clone(),
             node: ACCOUNT_0,
             selected_token: concordium_cis2::TokenIdU32(0),
+            amount_of_tokens: 1,
         };
         assert_eq!(state.check_proof(&proof_params), true);
 
@@ -697,6 +789,7 @@ mod tests {
             proof: test_merkle_proof.clone(),
             node: ACCOUNT_1,
             selected_token: concordium_cis2::TokenIdU32(0),
+            amount_of_tokens: 1,
         };
         assert_eq!(state.check_proof(&proof_params), false);
     }
@@ -721,7 +814,10 @@ mod tests {
             whitelist: whitelist.clone(),
             reserve: 4,
             base_url: String::new(),
+            whitelist_file: String::new(),
+            metadata: String::new(),
             selected_index: false,
+            nft_limit_per_address: 0
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -743,6 +839,7 @@ mod tests {
             node: ACCOUNT_0,
             proof: test_proof.clone(),
             selected_token: concordium_cis2::TokenIdU32(0),
+            amount_of_tokens: 1,
         };
 
         let mut host = TestHost::new(state, state_builder);
@@ -759,6 +856,7 @@ mod tests {
             node: ACCOUNT_1,
             proof: test_proof.clone(),
             selected_token: concordium_cis2::TokenIdU32(0),
+            amount_of_tokens: 1,
         };
         let bad_claim_parameter_bytes = to_bytes(&mint_bad_params);
         ctx_bad_claim.set_parameter(&bad_claim_parameter_bytes);
@@ -791,7 +889,10 @@ mod tests {
             whitelist: whitelist.clone(),
             reserve: 0,
             base_url: String::new(),
+            whitelist_file: String::new(),
+            metadata: String::new(),
             selected_index: false,
+            nft_limit_per_address: 0
         };
 
         let mut test_proof: Vec<String> = vec![];
@@ -811,6 +912,7 @@ mod tests {
             node: ACCOUNT_0,
             proof: test_proof.clone(),
             selected_token: concordium_cis2::TokenIdU32(0),
+            amount_of_tokens: 1,
         };
 
         let mut host = TestHost::new(state, state_builder);
@@ -828,6 +930,7 @@ mod tests {
             node: ACCOUNT_1,
             proof: test_proof.clone(),
             selected_token: concordium_cis2::TokenIdU32(0),
+            amount_of_tokens: 1,
         };
         let bad_claim_parameter_bytes = to_bytes(&mint_bad_params);
         ctx_bad_claim.set_parameter(&bad_claim_parameter_bytes);
@@ -859,7 +962,10 @@ mod tests {
             whitelist: whitelist.clone(),
             reserve: 2,
             base_url: String::new(),
+            whitelist_file: String::new(),
+            metadata: String::new(),
             selected_index: false,
+            nft_limit_per_address: 0
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -874,6 +980,7 @@ mod tests {
             node: ACCOUNT_1,
             proof: vec![],
             selected_token: concordium_cis2::TokenIdU32(0),
+            amount_of_tokens: 1,
         };
 
         let mut host = TestHost::new(state, state_builder);
@@ -898,6 +1005,7 @@ mod tests {
             node: ACCOUNT_0,
             proof: test_proof.clone(),
             selected_token: concordium_cis2::TokenIdU32(0),
+            amount_of_tokens: 1,
         };
 
         let wl_claim_parameter_bytes = to_bytes(&mint_wl_params);
@@ -930,8 +1038,11 @@ mod tests {
             nft_time_limit: 10,
             whitelist: vec![],
             reserve: 0,
+            whitelist_file: String::new(),
+            metadata: String::new(),
             base_url: String::new(),
             selected_index: false,
+            nft_limit_per_address: 0
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -947,6 +1058,7 @@ mod tests {
             node: ACCOUNT_0,
             proof: vec![],
             selected_token: concordium_cis2::TokenIdU32(0),
+            amount_of_tokens: 1,
         };
 
         let mut host = TestHost::new(new_state, state_builder);
@@ -980,7 +1092,10 @@ mod tests {
             whitelist: vec![],
             reserve: 0,
             base_url: "https://some.example/token/".to_string(),
+            whitelist_file: String::new(),
+            metadata: String::new(),
             selected_index: true,
+            nft_limit_per_address: 0
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -996,6 +1111,7 @@ mod tests {
             node: ACCOUNT_0,
             proof: vec![],
             selected_token: concordium_cis2::TokenIdU32(2),
+            amount_of_tokens: 1,
         };
 
         let mut host = TestHost::new(new_state, state_builder);
@@ -1046,7 +1162,7 @@ mod tests {
         let non_owner_parameter_bytes = to_bytes(&non_owner_params);
         non_owner_ctx.set_parameter(&non_owner_parameter_bytes);
         let non_owner_result: Result<CheckOwnerReply, Reject> =
-            check_owner(&non_owner_ctx, &mut host);
+        check_owner(&non_owner_ctx, &mut host);
         assert!(non_owner_result.is_ok());
         let non_result_details = non_owner_result.unwrap();
         assert!(non_result_details.address.is_none());
@@ -1055,14 +1171,74 @@ mod tests {
         assert_eq!(total_supply(&non_owner_ctx, &mut host).unwrap(), 2);
         assert_eq!(current_supply(&non_owner_ctx, &mut host).unwrap(), 1);
 
-        let mut vr = HashMap::default();
-        vr.insert(concordium_cis2::TokenIdU32(2), account_0_string);
         assert_eq!(
             view(&ctx_claim, &host).unwrap(),
-            ViewResult { claimed_tokens: vr }
+            ViewResult { metadata: String::new(), whitelist: String::new(), number_of_nfts: 2 }
         );
 
         let claim_result_bad: Result<(), Error> = claim_nft(&ctx_claim, &mut host, &mut logger);
         assert_eq!(claim_result_bad, Err(Error::IndexAlreadyClaimed));
+    }
+
+
+    #[concordium_test]
+    fn test_mint_no_reserve_no_whitelist_address_limited() {
+        let mut ctx = TestInitContext::empty();
+        ctx.set_metadata_slot_time(Timestamp::from_timestamp_millis(1));
+        let mut state_builder = TestStateBuilder::new();
+
+        const ACCOUNT_0: AccountAddress = AccountAddress([1u8; 32]);
+
+        let params = InitParams {
+            nft_limit: 3,
+            nft_time_limit: 0,
+            whitelist: vec![],
+            reserve: 0,
+            base_url: String::new(),
+            whitelist_file: String::new(),
+            metadata: String::new(),
+            selected_index: false,
+            nft_limit_per_address: 1
+        };
+
+        let parameter_bytes = to_bytes(&params);
+        ctx.set_parameter(&parameter_bytes);
+
+        let state_result = init(&ctx, &mut state_builder);
+        let new_state = state_result.unwrap();
+        assert_eq!(new_state.nft_limit, 3);
+
+        let mut ctx_claim = TestReceiveContext::empty();
+        ctx_claim.set_metadata_slot_time(Timestamp::from_timestamp_millis(1));
+        let mint_params = ClaimNFTParams {
+            node: ACCOUNT_0,
+            proof: vec![],
+            selected_token: concordium_cis2::TokenIdU32(0),
+            amount_of_tokens: 2,
+        };
+
+        let mut host = TestHost::new(new_state, state_builder);
+        let claim_parameter_bytes = to_bytes(&mint_params);
+        ctx_claim.set_parameter(&claim_parameter_bytes);
+        let mut logger = TestLogger::init();
+
+        let claim_result = claim_nft(&ctx_claim, &mut host, &mut logger);
+        assert_eq!(claim_result.is_ok(), true);
+
+        let mut ctx_balance = TestReceiveContext::empty();
+        
+        const TEST_ACCOUNT: AccountAddress = AccountAddress([1u8; 32]);
+
+        let address:BalanceParam = BalanceParam {
+            node:TEST_ACCOUNT
+        };
+
+        let balance_parameter_bytes = to_bytes(&address);
+        ctx_balance.set_parameter(&balance_parameter_bytes);
+        let tokens_per_address = balance_of(&ctx_claim, &mut host).unwrap();
+        assert_eq!(tokens_per_address, 2);
+
+        let claim_result_bad: Result<(), Error> = claim_nft(&ctx_claim, &mut host, &mut logger);
+        assert_eq!(claim_result_bad, Err(Error::NFTLimitReached));
     }
 }
