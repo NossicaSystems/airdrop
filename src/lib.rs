@@ -66,6 +66,7 @@ pub struct TokenParam {
 /// The parameter type for the contract function `balance_of`.
 #[derive(Debug, Serialize, SchemaType)]
 pub struct BalanceParam {
+    _dummy: i32, // without this the AccountAddress get corrupted
     node: AccountAddress,
 }
 
@@ -91,7 +92,7 @@ pub struct State<S> {
     /// Max number of nfts that can be minted before hitting reserve
     nft_limit: u32,
     /// Max number of nfts that can be claimed per address
-    nft_limit_per_address:  Option<u32>, 
+    nft_limit_per_address: Option<u32>,
     /// Number of nfts which are held in reserve
     nft_reserve: Option<u32>,
     /// Airdrop time limit
@@ -314,12 +315,12 @@ fn init<S: HasStateApi>(
 
     state.metadata = params.metadata;
     state.whitelist = params.whitelist_file;
-    
+
     if params.nft_time_limit != 0 {
         state.nft_time_limit = Some(Timestamp::from_timestamp_millis(params.nft_time_limit));
     }
 
-    if params.nft_limit_per_address != 0 {        
+    if params.nft_limit_per_address != 0 {
         state.nft_limit_per_address = Some(params.nft_limit_per_address);
     }
 
@@ -363,10 +364,6 @@ fn claim_nft<S: HasStateApi>(
     }
 
     let params: ClaimNFTParams = ctx.parameter_cursor().get()?;
-   
-    println!("minting address is {:?}", params.node);
-
-   
     let current_token_id = state.next_token_id;
     let amount_of_tokens = params.amount_of_tokens;
     if current_token_id + params.amount_of_tokens > state.nft_limit {
@@ -374,13 +371,10 @@ fn claim_nft<S: HasStateApi>(
     }
 
     if let Some(max_claims_per_address) = state.nft_limit_per_address {
-        match state.claimed_nfts.get(&params.node) {
-            Some(val) => {
-                if *val + amount_of_tokens >= max_claims_per_address {
-                    return Err(Error::NFTLimitReached);
-                }
-            },
-            None => {},
+        if let Some(val) = state.claimed_nfts.get(&params.node) {
+            if *val + amount_of_tokens >= max_claims_per_address {
+                return Err(Error::NFTLimitReached);
+            }
         };
     }
 
@@ -486,7 +480,7 @@ fn view<S: HasStateApi>(
     })
 }
 
-/// View function that returns the metadata, whitelist and number of NFTs
+/// View function that returns the amount of tokens claimed by the address
 #[receive(
     contract = "airdrop_project",
     name = "balance_of",
@@ -499,18 +493,14 @@ fn balance_of<S: HasStateApi>(
 ) -> ReceiveResult<u32> {
     let state: &State<S> = host.state();
     let params: BalanceParam = ctx.parameter_cursor().get()?;
-    println!("balance address is {:?}", params.node);
 
     let res = state.claimed_nfts.get(&params.node);
-    //.ok_or(0).unwrap();
     if res.is_none() {
         Ok(0)
-    }
-    else {
+    } else {
         Ok(*state.claimed_nfts.get(&params.node).unwrap())
     }
 }
-
 
 /// View function that returns the total supply of available NFTs
 #[receive(
@@ -605,7 +595,7 @@ mod tests {
             whitelist_file: String::new(),
             metadata: String::new(),
             selected_index: false,
-            nft_limit_per_address: 0
+            nft_limit_per_address: 0,
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -633,7 +623,7 @@ mod tests {
             whitelist_file: String::new(),
             metadata: String::new(),
             selected_index: false,
-            nft_limit_per_address: 0
+            nft_limit_per_address: 0,
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -688,7 +678,7 @@ mod tests {
             whitelist_file: String::new(),
             metadata: String::new(),
             selected_index: false,
-            nft_limit_per_address: 0
+            nft_limit_per_address: 0,
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -745,7 +735,7 @@ mod tests {
             reserve: 0,
             base_url: String::new(),
             selected_index: false,
-            nft_limit_per_address: 0
+            nft_limit_per_address: 0,
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -817,7 +807,7 @@ mod tests {
             whitelist_file: String::new(),
             metadata: String::new(),
             selected_index: false,
-            nft_limit_per_address: 0
+            nft_limit_per_address: 0,
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -892,7 +882,7 @@ mod tests {
             whitelist_file: String::new(),
             metadata: String::new(),
             selected_index: false,
-            nft_limit_per_address: 0
+            nft_limit_per_address: 0,
         };
 
         let mut test_proof: Vec<String> = vec![];
@@ -965,7 +955,7 @@ mod tests {
             whitelist_file: String::new(),
             metadata: String::new(),
             selected_index: false,
-            nft_limit_per_address: 0
+            nft_limit_per_address: 0,
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -1042,7 +1032,7 @@ mod tests {
             metadata: String::new(),
             base_url: String::new(),
             selected_index: false,
-            nft_limit_per_address: 0
+            nft_limit_per_address: 0,
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -1095,7 +1085,7 @@ mod tests {
             whitelist_file: String::new(),
             metadata: String::new(),
             selected_index: true,
-            nft_limit_per_address: 0
+            nft_limit_per_address: 0,
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -1162,7 +1152,7 @@ mod tests {
         let non_owner_parameter_bytes = to_bytes(&non_owner_params);
         non_owner_ctx.set_parameter(&non_owner_parameter_bytes);
         let non_owner_result: Result<CheckOwnerReply, Reject> =
-        check_owner(&non_owner_ctx, &mut host);
+            check_owner(&non_owner_ctx, &mut host);
         assert!(non_owner_result.is_ok());
         let non_result_details = non_owner_result.unwrap();
         assert!(non_result_details.address.is_none());
@@ -1173,13 +1163,16 @@ mod tests {
 
         assert_eq!(
             view(&ctx_claim, &host).unwrap(),
-            ViewResult { metadata: String::new(), whitelist: String::new(), number_of_nfts: 2 }
+            ViewResult {
+                metadata: String::new(),
+                whitelist: String::new(),
+                number_of_nfts: 2
+            }
         );
 
         let claim_result_bad: Result<(), Error> = claim_nft(&ctx_claim, &mut host, &mut logger);
         assert_eq!(claim_result_bad, Err(Error::IndexAlreadyClaimed));
     }
-
 
     #[concordium_test]
     fn test_mint_no_reserve_no_whitelist_address_limited() {
@@ -1198,7 +1191,7 @@ mod tests {
             whitelist_file: String::new(),
             metadata: String::new(),
             selected_index: false,
-            nft_limit_per_address: 1
+            nft_limit_per_address: 1,
         };
 
         let parameter_bytes = to_bytes(&params);
@@ -1226,11 +1219,12 @@ mod tests {
         assert_eq!(claim_result.is_ok(), true);
 
         let mut ctx_balance = TestReceiveContext::empty();
-        
+
         const TEST_ACCOUNT: AccountAddress = AccountAddress([1u8; 32]);
 
-        let address:BalanceParam = BalanceParam {
-            node:TEST_ACCOUNT
+        let address: BalanceParam = BalanceParam {
+            _dummy: 1,
+            node: TEST_ACCOUNT,
         };
 
         let balance_parameter_bytes = to_bytes(&address);
