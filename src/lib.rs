@@ -11,6 +11,7 @@ type ContractTokenId = TokenIdU32;
 
 type ContractTokenAmount = TokenAmountU32;
 
+/* 
 fn account_address_to_string(address: AccountAddress) -> String {
     let hex_chars: Vec<String> = address
         .0
@@ -20,6 +21,7 @@ fn account_address_to_string(address: AccountAddress) -> String {
         .collect();
     hex_chars.join("")
 }
+*/
 
 /// The parameter for the contract function `mint` which mints a number of
 /// tokens to a given address.
@@ -41,6 +43,7 @@ struct InitParams {
 pub struct ClaimNFTParams {
     proof: Vec<String>,
     node: AccountAddress,
+    node_string: String,
     selected_token: ContractTokenId,
     amount_of_tokens: u32,
 }
@@ -70,7 +73,6 @@ pub struct BalanceParam {
     node: AccountAddress,
 }
 
-//
 #[derive(Serial, Deserial, SchemaType, Clone)]
 pub struct MerkleTree {
     length: u8,
@@ -233,7 +235,7 @@ impl<S: HasStateApi> State<S> {
 
     // Use this to compare the user's proof with our's
     pub fn check_proof(&self, test: &ClaimNFTParams) -> bool {
-        let claimer = digest(account_address_to_string(test.node));
+        let claimer = digest(test.node_string.clone());
 
         let master_proof = self.get_hash_proof(claimer);
         if master_proof.is_none() {
@@ -381,9 +383,10 @@ fn claim_nft<S: HasStateApi>(
     // if there is a whitelist and no reserve only whitelist can by
     // if there is no whitelist everyone can buy
     // if there is a reserve and a whitelist only whitelist can by reserve
-    if ((state.merkle_tree.is_some() && state.nft_reserve.is_none())
+    // Presence of a whitelist is determined by the presence of the merkle tree
+    if ((state.merkle_tree.is_some() && state.nft_reserve.is_none())  // whitelist and no reserve
         || (state.merkle_tree.is_some()
-            && state.next_token_id >= (state.nft_limit - state.nft_reserve.unwrap_or(0))))
+            && state.next_token_id >= (state.nft_limit - state.nft_reserve.unwrap_or(0))))  // whitelist and only reserve left
         && (params.proof.is_empty() || !state.check_proof(&params))
     {
         return Err(Error::AddressNotOnWhitelist);
@@ -450,7 +453,7 @@ fn claim_nft<S: HasStateApi>(
             .taken_indexes
             .as_mut()
             .unwrap()
-            .insert(token_id_to_use, account_address_to_string(params.node));
+            .insert(token_id_to_use, params.node_string);
     } else {
         state.next_token_id += params.amount_of_tokens;
     }
@@ -612,6 +615,7 @@ mod tests {
         let mut state_builder = TestStateBuilder::new();
 
         const ACCOUNT_0: AccountAddress = AccountAddress([1u8; 32]);
+        let account_0_string = "00000000000000000000000000000000000000000000000000".to_string();
 
         // This should allow anyone to purchase 1 NFT
         let params = InitParams {
@@ -637,6 +641,7 @@ mod tests {
         ctx_claim.set_metadata_slot_time(Timestamp::from_timestamp_millis(1));
         let mint_params = ClaimNFTParams {
             node: ACCOUNT_0,
+            node_string: account_0_string,
             proof: vec![],
             selected_token: concordium_cis2::TokenIdU32(0),
             amount_of_tokens: 2,
@@ -770,6 +775,7 @@ mod tests {
         let proof_params = ClaimNFTParams {
             proof: test_merkle_proof.clone(),
             node: ACCOUNT_0,
+            node_string: account_0_string,
             selected_token: concordium_cis2::TokenIdU32(0),
             amount_of_tokens: 1,
         };
@@ -778,6 +784,7 @@ mod tests {
         let proof_params = ClaimNFTParams {
             proof: test_merkle_proof.clone(),
             node: ACCOUNT_1,
+            node_string: account_1_string,
             selected_token: concordium_cis2::TokenIdU32(0),
             amount_of_tokens: 1,
         };
@@ -827,6 +834,7 @@ mod tests {
 
         let mint_params = ClaimNFTParams {
             node: ACCOUNT_0,
+            node_string: account_0_string,
             proof: test_proof.clone(),
             selected_token: concordium_cis2::TokenIdU32(0),
             amount_of_tokens: 1,
@@ -844,6 +852,7 @@ mod tests {
         ctx_bad_claim.set_metadata_slot_time(Timestamp::from_timestamp_millis(1));
         let mint_bad_params = ClaimNFTParams {
             node: ACCOUNT_1,
+            node_string: account_1_string,
             proof: test_proof.clone(),
             selected_token: concordium_cis2::TokenIdU32(0),
             amount_of_tokens: 1,
@@ -874,7 +883,7 @@ mod tests {
 
         // This should allow anyone to purchase 1 NFT
         let params = InitParams {
-            nft_limit: 4,
+            nft_limit: 10,
             nft_time_limit: 0,
             whitelist: whitelist.clone(),
             reserve: 0,
@@ -882,7 +891,7 @@ mod tests {
             whitelist_file: String::new(),
             metadata: String::new(),
             selected_index: false,
-            nft_limit_per_address: 0,
+            nft_limit_per_address: 1,
         };
 
         let mut test_proof: Vec<String> = vec![];
@@ -900,6 +909,7 @@ mod tests {
         let mut ctx_claim = TestReceiveContext::empty();
         let mint_params = ClaimNFTParams {
             node: ACCOUNT_0,
+            node_string: account_0_string,
             proof: test_proof.clone(),
             selected_token: concordium_cis2::TokenIdU32(0),
             amount_of_tokens: 1,
@@ -918,6 +928,7 @@ mod tests {
         ctx_bad_claim.set_metadata_slot_time(Timestamp::from_timestamp_millis(1));
         let mint_bad_params = ClaimNFTParams {
             node: ACCOUNT_1,
+            node_string: account_1_string,
             proof: test_proof.clone(),
             selected_token: concordium_cis2::TokenIdU32(0),
             amount_of_tokens: 1,
@@ -940,6 +951,8 @@ mod tests {
         let mut state_builder = TestStateBuilder::new();
 
         let account_0_string = "00000000000000000000000000000000000000000000000000".to_string();
+        let account_1_string = "11111111111111111111111111111111111111111111111111".to_string();
+
         const ACCOUNT_0: AccountAddress = AccountAddress([0u8; 32]);
         const ACCOUNT_1: AccountAddress = AccountAddress([1u8; 32]);
 
@@ -968,6 +981,7 @@ mod tests {
 
         let mint_params = ClaimNFTParams {
             node: ACCOUNT_1,
+            node_string: account_1_string,
             proof: vec![],
             selected_token: concordium_cis2::TokenIdU32(0),
             amount_of_tokens: 1,
@@ -993,6 +1007,7 @@ mod tests {
 
         let mint_wl_params = ClaimNFTParams {
             node: ACCOUNT_0,
+            node_string: account_0_string,
             proof: test_proof.clone(),
             selected_token: concordium_cis2::TokenIdU32(0),
             amount_of_tokens: 1,
@@ -1021,6 +1036,7 @@ mod tests {
         let mut state_builder = TestStateBuilder::new();
         ctx.set_metadata_slot_time(Timestamp::from_timestamp_millis(1));
         const ACCOUNT_0: AccountAddress = AccountAddress([0u8; 32]);
+        let account_0_string = "00000000000000000000000000000000000000000000000000".to_string();
 
         // This should allow anyone to purchase 1 NFT
         let params = InitParams {
@@ -1046,6 +1062,7 @@ mod tests {
         ctx_claim.set_metadata_slot_time(Timestamp::from_timestamp_millis(1));
         let mint_params = ClaimNFTParams {
             node: ACCOUNT_0,
+            node_string: account_0_string,
             proof: vec![],
             selected_token: concordium_cis2::TokenIdU32(0),
             amount_of_tokens: 1,
@@ -1099,6 +1116,7 @@ mod tests {
         ctx_claim.set_metadata_slot_time(Timestamp::from_timestamp_millis(1));
         let mint_params = ClaimNFTParams {
             node: ACCOUNT_0,
+            node_string: account_0_string.clone(),
             proof: vec![],
             selected_token: concordium_cis2::TokenIdU32(2),
             amount_of_tokens: 1,
@@ -1181,6 +1199,7 @@ mod tests {
         let mut state_builder = TestStateBuilder::new();
 
         const ACCOUNT_0: AccountAddress = AccountAddress([1u8; 32]);
+        let account_0_string = "00000000000000000000000000000000000000000000000000".to_string();
 
         let params = InitParams {
             nft_limit: 3,
@@ -1205,6 +1224,7 @@ mod tests {
         ctx_claim.set_metadata_slot_time(Timestamp::from_timestamp_millis(1));
         let mint_params = ClaimNFTParams {
             node: ACCOUNT_0,
+            node_string: account_0_string,
             proof: vec![],
             selected_token: concordium_cis2::TokenIdU32(0),
             amount_of_tokens: 2,
