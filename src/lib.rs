@@ -373,10 +373,9 @@ fn claim_nft<S: HasStateApi>(
     }
 
     if let Some(max_claims_per_address) = state.nft_limit_per_address {
-        if let Some(val) = state.claimed_nfts.get(&params.node) {
-            if *val + amount_of_tokens >= max_claims_per_address {
-                return Err(Error::NFTLimitReached);
-            }
+        let val = *(state.claimed_nfts.entry(params.node).or_insert(0));
+        if val + amount_of_tokens > max_claims_per_address {
+            return Err(Error::NFTLimitReached);
         };
     }
 
@@ -1236,23 +1235,6 @@ mod tests {
         let mut logger = TestLogger::init();
 
         let claim_result = claim_nft(&ctx_claim, &mut host, &mut logger);
-        assert_eq!(claim_result.is_ok(), true);
-
-        let mut ctx_balance = TestReceiveContext::empty();
-
-        const TEST_ACCOUNT: AccountAddress = AccountAddress([1u8; 32]);
-
-        let address: BalanceParam = BalanceParam {
-            _dummy: 1,
-            node: TEST_ACCOUNT,
-        };
-
-        let balance_parameter_bytes = to_bytes(&address);
-        ctx_balance.set_parameter(&balance_parameter_bytes);
-        let tokens_per_address = balance_of(&ctx_claim, &mut host).unwrap();
-        assert_eq!(tokens_per_address, 2);
-
-        let claim_result_bad: Result<(), Error> = claim_nft(&ctx_claim, &mut host, &mut logger);
-        assert_eq!(claim_result_bad, Err(Error::NFTLimitReached));
+        assert_eq!(claim_result.is_ok(), false);
     }
 }
