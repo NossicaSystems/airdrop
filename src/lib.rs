@@ -11,7 +11,7 @@ type ContractTokenId = TokenIdU32;
 
 type ContractTokenAmount = TokenAmountU32;
 
-/* 
+/*
 fn account_address_to_string(address: AccountAddress) -> String {
     let hex_chars: Vec<String> = address
         .0
@@ -385,11 +385,12 @@ fn claim_nft<S: HasStateApi>(
     // Presence of a whitelist is determined by the presence of the merkle tree
     if ((state.merkle_tree.is_some() && state.nft_reserve.is_none())  // whitelist and no reserve
         || (state.merkle_tree.is_some()
-            && state.next_token_id >= (state.nft_limit - state.nft_reserve.unwrap_or(0))))  // whitelist and only reserve left
+            && state.next_token_id + amount_of_tokens > (state.nft_limit - state.nft_reserve.unwrap_or(0))))  // whitelist and only reserve left
         && (params.proof.is_empty() || !state.check_proof(&params))
     {
         return Err(Error::AddressNotOnWhitelist);
     }
+
     // This is where the code differentiates between the user claiming the next available token
     // and the user claiming a specific one they have requested.
     let token_id_to_use = if state.taken_indexes.is_some() {
