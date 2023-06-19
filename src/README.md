@@ -15,23 +15,37 @@ Init:  This initialises the nft.
 This takes an InitParams structure which contains:
     whitelist - a vector of address.  Leave empty if there is no whitelist required.
     nft_limit - the maximum amount of nfts that can be claimed.  Leave 0 for no limit.
+    nft_limit_per_address - the maximum amount of nfts that can be claimed per address.  Leave 0 for no limit.
     nft_time_limit - the time at which the airdrop will end.
-    reserve - the amount of nfts which will be held back for a whitelist (if there is no whitelist they cannot be claimed).  Leave 0 for no reserve.
+    reserve - the amount of nfts which will be held back for the whitelist.  Leave 0 for no reserve.
     base_url - the base url for the nft
+    metadata - the IPFS link for the metadata file
+    whitelist_file - the IPFS link for the whitelist file
+    selected_index - boolean which determines whether claimined specific NFTs is supported
 
 
-contract_claim_nft:  this claims an instance of the token.
+contract_claim_nft:  this claims a specified amount of tokens.
 
 This takes a MintParams structure which contains:
     proof - the merkle proof for the claiming node.  Can be blank if no whitelist is in use for this claim.
     node - the address of the claiming node
+    node_string - the address of the claiming node in string format
+    selected_token - the ID of the token being claimed
+    amount_of_tokens - the amount of tokens being claimed
 
-view:   Returns the internal state of the contract
+view:   Returns the metadata, whiteslist and number of claimed NFTs
 
-*Intended use:*
+balance_of: Returns the amount of tokens claimed by the specified address.
 
-The owner will call Init and pass through the metadata to instantiate the contract and create a claimable NFT.
+This takes a BalanceParam structure which contains:
+    dummy: an integer which is always set to 0
+    node: the address being queries
 
-Users will check in the front end if various NFTs exist and if they do they can use the contract_claim_nft to claim them.  Depending on the metadata they might need to be on the relevant whitelist.
+total_supply: Returns the amount of claimable tokens
 
-The view function can be called to observe the current status of the nft.
+current_supply: Returns the amount of tokens that are currently claimable
+
+check_owner: Returns the owner of the specified token
+
+This takes a TokenParam structure which contains:
+    token - the token ID being queried.
